@@ -42,3 +42,13 @@ print(r.hbins[0].cells[0].subkeys[0].subkeys[0].subkeys[0].values[0])
 # reg.cell.KeyValue at 0x1628, (Default)
 print(r.hbins[0].cells[0].subkeys[0].subkeys[0].subkeys[0].values[1])
 # reg.cell.KeyValue at 0x16a0, TypeID
+
+
+for subkey0 in r.hbins[0].cells[0].subkeys:
+    print(subkey0)
+    for subkey1 in subkey0.subkeys:
+        print('\t' + str(subkey1))
+        for subkey2 in subkey1.subkeys:
+            print('\t\t' + str(subkey2))
+            for value in subkey2.values:
+                print('\t\t\t' + str(value))

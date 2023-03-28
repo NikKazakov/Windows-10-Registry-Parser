@@ -17,6 +17,20 @@ FLAG_KEY_PREDEF_HANDLE = 0x0040
 
 FLAG_VALUE_COMP_NAME = 0x0001
 
+class RegType(enum.IntEnum):
+    REG_NONE = 0x00000000 	
+    REG_SZ = 0x00000001
+    REG_EXPAND_SZ = 0x00000002 	
+    REG_BINARY = 0x00000003 	
+    REG_DWORD = 0x00000004 	
+    REG_DWORD_BIG_ENDIAN = 0x00000005 	
+    REG_LINK = 0x00000006 	
+    REG_MULTI_SZ = 0x00000007 	
+    REG_RESOURCE_LIST = 0x00000008 	
+    REG_FULL_RESOURCE_DESCRIPTOR = 0x00000009 	
+    REG_RESOURCE_REQUIREMENTS_LIST = 0x0000000a 	
+    REG_QWORD = 0x0000000b 	
+
 
 class Cell(Block):
     def __init__(self, buf, offset):
@@ -161,10 +175,32 @@ class KeyValue(Cell):
             self._fields['name'] = (24, STR, self.name_length, encoding)
         else:
             self._fields_loaded['name'] = '(Default)'
+        
+        self._data = None
     
+    @property
+    def data(self):
+        if self._data is None:
+            if self.data_size >= 0x80000000:
+                self._data = self.data_offset
+            else:
+                if self.data_type in [RegType.REG_SZ, RegType.REG_EXPAND_SZ, RegType.REG_MULTI_SZ]:
+                    format = [STR, self.data_size, 'utf-16-le']
+                elif self.data_type == RegType.REG_QWORD:
+                    format = [QWORD, 8]
+                elif self.data_type == RegType.REG_BINARY:
+                    format = [BYTES, self.data_size]
+                else:
+                    print(RegType(self.data_type).name)
+                    raise SystemError
+                cell = Cell(self._buf, 4096 + self.data_offset)
+                self._data = cell.unpack(4, *format)
+                if self.data_type == RegType.REG_MULTI_SZ:
+                    self._data = self._data.split('\x00')
+        return self._data
+
     def __str__(self):
-        return f'{self.__class__.__module__}.KeyValue at {hex(self._offset)}, {self.name}'
-    
+        return f'{self.__class__.__module__}.KeyValue at {hex(self._offset)}, name="{self.name}" type="{RegType(self.data_type).name}" value="{self.data}"'
 CELL_TYPES['vk'] = KeyValue
 
 

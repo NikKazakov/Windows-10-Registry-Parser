@@ -10,6 +10,7 @@ log = logging.getLogger()
 
 WORD = enum.auto()
 DWORD = enum.auto()
+QWORD = enum.auto()
 INT = enum.auto()
 FILETIME = enum.auto()
 GUID = enum.auto()
@@ -105,6 +106,9 @@ class Block:
         elif ftype == DWORD:
             format = 'I'
             size = 4
+        elif ftype == QWORD:
+            format = 'Q'
+            size = 8
         elif ftype == INT:
             format = 'i'
             size = 4
@@ -123,11 +127,15 @@ class Block:
 
         if ftype == STR:
             encoding = opts[1] if len(opts) == 2 else 'ascii'
-            return value.decode(encoding)
+            return value.decode(encoding).strip('\x00')
         elif ftype == FILETIME:
             return str(FILETIME_EPOCH + datetime.timedelta(microseconds=(value // 10)))
         elif ftype == GUID:
             return str(uuid.UUID(bytes=value))
+        elif ftype == QWORD:
+            return hex(value)
+        elif ftype == BYTES:
+            return ' '.join([ '%0.2x'%i for i in value ])[:10]
         return value
         return str(value)
         return Field(ftype, size, value, opts)
