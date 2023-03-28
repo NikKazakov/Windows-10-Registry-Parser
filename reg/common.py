@@ -21,6 +21,10 @@ FILETIME_EPOCH = datetime.datetime(1601, 1, 1)
 
 
 class Field:
+    '''
+    DEPRECATED
+    A wrap around byte value to include size, type and additional options (size and encoding for string)
+    '''
     def __init__(self, ftype, size, value, *opts):
         self.ftype = ftype
         self.size = size
@@ -78,6 +82,11 @@ class Field:
 
 
 class Block:
+    '''
+    Represents consecutive byte fields
+    Lazy-loads fields provided in constructor via __getattribute__ magic
+    Provider generalized __str__ for all heirs
+    '''
     def __init__(self, buf, offset, fields):
         self._buf = buf
         self._offset = offset
@@ -148,6 +157,10 @@ class Block:
 
 
 class LazyList:
+    '''
+    Iterable structure with lazy-loading
+    Override _load_next to change what should go into this
+    '''
     def __init__(self, buf, offset, children, max_size=-1, max_items=-1):
         self._buf = buf
         self._offset = offset
