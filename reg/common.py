@@ -10,6 +10,7 @@ log = logging.getLogger()
 
 WORD = enum.auto()
 DWORD = enum.auto()
+DWORD_BIG = enum.auto()
 QWORD = enum.auto()
 INT = enum.auto()
 FILETIME = enum.auto()
@@ -19,67 +20,6 @@ BYTES = enum.auto()
 
 # Constants to convert from filetime
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1)
-
-
-class Field:
-    '''
-    DEPRECATED
-    A wrap around byte value to include size, type and additional options (size and encoding for string)
-    '''
-    def __init__(self, ftype, size, value, *opts):
-        self.ftype = ftype
-        self.size = size
-        self.value = value
-        self.opts = opts
-
-    def __get__(self):
-        return self.value
-
-    def __str__(self):
-        if self.ftype == STR:
-            encoding = self.opts[1] if len(self.opts) == 2 else 'ascii'
-            return self.value.decode(encoding)
-        elif self.ftype == FILETIME:
-            return str(FILETIME_EPOCH + datetime.timedelta(microseconds=(self.value // 10)))
-        elif self.ftype == GUID:
-            return str(uuid.UUID(bytes=self.value))
-        return str(self.value)
-
-    def __lt__(self, other):
-        return self.value.__lt__(other)
-
-    def __le__(self, other):
-        return self.value.__le__(other)
-
-    def __gt__(self, other):
-        return self.value.__gt__(other)
-
-    def __ge__(self, other):
-        return self.value.__ge__(other)
-
-    def __eq__(self, other):
-        return self.value.__eq__(other)
-
-    def __ne__(self, other):
-        return self.value.__ne__(other)
-    
-    def __not__(self):
-        return self.value.__not__()
-
-    def __add__(self, other):
-        return self.value.__add__(other)
-
-    def __radd__(self, other):
-        return self.value.__radd__(other)
-    
-    def __abs__(self):
-        return self.value.__abs__()
-    
-    def __hash__(self):
-        return self.value.__hash__()
-    
-    def __and__(self, other):
-        return self.value.__and__(other)
 
 
 class Block:
@@ -106,6 +46,9 @@ class Block:
         elif ftype == DWORD:
             format = 'I'
             size = 4
+        elif ftype == DWORD_BIG:
+            format = '>I'
+            size = 4
         elif ftype == QWORD:
             format = 'Q'
             size = 8
@@ -122,23 +65,28 @@ class Block:
         try:
             value = struct.unpack(format, self._buf[self._offset+offset : self._offset+offset+size])[0]
         except struct.error as e:
-            log.critical(f'{self._buf[:100]} {self._offset}+{offset} {ftype}:{size}')
+            log.critical(f'{self._offset}+{offset}/{len(self._buf)} {ftype}:{size}')
+            log.critical(f'{self._buf[self._offset+offset-20:self._offset+offset+80]}')
             raise e
 
         if ftype == STR:
             encoding = opts[1] if len(opts) == 2 else 'ascii'
-            return value.decode(encoding).strip('\x00')
+            try:
+                r = value.decode(encoding).strip('\x00')
+            except UnicodeDecodeError:
+                # In regedit invalid values are just silent
+                r = '...'  
+            return r
         elif ftype == FILETIME:
             return str(FILETIME_EPOCH + datetime.timedelta(microseconds=(value // 10)))
         elif ftype == GUID:
             return str(uuid.UUID(bytes=value))
         elif ftype == QWORD:
             return hex(value)
-        elif ftype == BYTES:
-            return ' '.join([ '%0.2x'%i for i in value ])[:10]
+        # Maybe we want to print bytes prettier
+        # elif ftype == BYTES:
+        #     return ''.join([ '%0.2x'%i for i in value ])
         return value
-        return str(value)
-        return Field(ftype, size, value, opts)
 
     def __getattribute__(self, name: str):
         if name[0] != '_':
@@ -229,3 +177,29 @@ class LazyList:
         else:
             r += f' items, {self._current_size}/{self._max_size} bytes'
         return r
+
+
+class KeyedList:
+    def __init__(self, items):
+        if not isinstance(items, dict):
+            raise ValueError(f'Expected dict, got {type(items)}')
+        
+        self.items = items
+        self.values = list(items.values())
+    
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return self.items[key]
+        elif isinstance(key, int):
+            return self.values[key]
+        else:
+            raise TypeError(f'Expected str or int, got {type(key)}')
+    
+    def __iter__(self):
+        return self.values.__iter__()
+    
+    def __repr__(self):
+        return str(self.values)
+
+    def __len__(self):
+        return self.values.__len__()

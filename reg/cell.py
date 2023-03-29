@@ -29,7 +29,10 @@ class RegType(enum.IntEnum):
     REG_RESOURCE_LIST = 0x00000008 	
     REG_FULL_RESOURCE_DESCRIPTOR = 0x00000009 	
     REG_RESOURCE_REQUIREMENTS_LIST = 0x0000000a 	
-    REG_QWORD = 0x0000000b 	
+    REG_QWORD = 0x0000000b
+
+    def values():
+        return [i.value for i in RegType]
 
 
 class Cell(Block):
@@ -56,13 +59,19 @@ class PointersList(LazyList):
 CELL_TYPES = dict()
 
 
-class IndexLeaf(Cell):
-    pass
+class IndexLeaf(PointersList):
+    def __init__(self, buf, offset):
+        header = Cell(buf, offset)
+        header._fields['number_of_items'] = (6, WORD)
+        super().__init__(buf, 8+offset, KeyNode, max_items=header.number_of_items)
 CELL_TYPES['li'] = IndexLeaf
 
 
-class FastLeaf(Cell):
-    pass
+class FastLeaf(PointersList):
+    def __init__(self, buf, offset):
+        header = Cell(buf, offset)
+        header._fields['number_of_items'] = (6, WORD)
+        super().__init__(buf, 8+offset, KeyNode, max_items=header.number_of_items, step=8)
 CELL_TYPES['lf'] = FastLeaf
 
 
@@ -74,8 +83,18 @@ class HashLeaf(PointersList):
 CELL_TYPES['lh'] = HashLeaf
 
 
-class IndexRoot(Cell):
-    pass
+class IndexRoot(PointersList):
+    def __init__(self, buf, offset):
+        header = Cell(buf, offset)
+        header._fields['number_of_items'] = (6, WORD)
+        super().__init__(buf, 8+offset, None, max_items=header.number_of_items)
+    
+    def _load_next(self):
+        item_offset = self.pointers.unpack(self._current_size, DWORD)
+        self._current_size += self._step
+        cell = Cell(self._buf, 4096 + item_offset)
+        item = CELL_TYPES[cell.signature](self._buf, 4096 + item_offset)
+        return item
 CELL_TYPES['ri'] = IndexRoot
 
 
@@ -108,7 +127,7 @@ class KeyNode(Cell):
             encoding = 'ascii'
         else:
             encoding = 'utf-16-le'
-        self._fields['key_name'] = (80, STR, self.key_name_length, encoding)
+        self._fields['name'] = (80, STR, self.key_name_length, encoding)
         self._subkeys = None
         self._values = None
 
@@ -132,10 +151,10 @@ class KeyNode(Cell):
         return self._values
 
     def __str__(self):
-        return f'{self.__class__.__module__}.KeyNode at {hex(self._offset)}, {self.key_name}'
+        return f'{self.__class__.__module__}.KeyNode at {hex(self._offset)}, {self.name}'
     
     def _repr(self, path):
-        new_path = f'{path}/{self.key_name}'
+        new_path = f'{path}/{self.name}'
         print(new_path)
         for i in self.items():
             print(i)
@@ -183,34 +202,68 @@ class KeyValue(Cell):
         if self._data is None:
             if self.data_size >= 0x80000000:
                 self._data = self.data_offset
+            elif self._buf[4096 + self.data_offset + 4: 4096 + self.data_offset + 6] == b'db':
+                self._data = BigData(self._buf, 4096 + self.data_offset).data
             else:
                 if self.data_type in [RegType.REG_SZ, RegType.REG_EXPAND_SZ, RegType.REG_MULTI_SZ]:
                     format = [STR, self.data_size, 'utf-16-le']
+                elif self.data_type == RegType.REG_DWORD:
+                    format = [DWORD]
+                elif self.data_type == RegType.REG_DWORD_BIG_ENDIAN:
+                    format = [DWORD_BIG]
                 elif self.data_type == RegType.REG_QWORD:
-                    format = [QWORD, 8]
-                elif self.data_type == RegType.REG_BINARY:
+                    format = [QWORD]
+                elif self.data_type in [RegType.REG_NONE, RegType.REG_BINARY, RegType.REG_LINK, RegType.REG_RESOURCE_LIST, RegType.REG_FULL_RESOURCE_DESCRIPTOR, RegType.REG_RESOURCE_REQUIREMENTS_LIST]:
                     format = [BYTES, self.data_size]
-                else:
+                elif self.data_type in RegType.values():
                     print(RegType(self.data_type).name)
                     raise SystemError
-                cell = Cell(self._buf, 4096 + self.data_offset)
-                self._data = cell.unpack(4, *format)
+                else:  # UNKNOWN
+                    format = [BYTES, self.data_size]
+
+                self._data = Cell(self._buf, 4096 + self.data_offset).unpack(4, *format)                
+                
                 if self.data_type == RegType.REG_MULTI_SZ:
                     self._data = self._data.split('\x00')
         return self._data
 
+    @property
+    def type_str(self):
+        if self.data_type in RegType.values():
+            return RegType(self.data_type).name
+        else:
+            return f'UNKNOWN ({hex(self.data_type)})'
+
     def __str__(self):
-        return f'{self.__class__.__module__}.KeyValue at {hex(self._offset)}, name="{self.name}" type="{RegType(self.data_type).name}" value="{self.data}"'
+        return f'{self.__class__.__module__}.KeyValue at {hex(self._offset)}, name="{self.name}" type="{self.type_str}" value="{self.data}"'
 CELL_TYPES['vk'] = KeyValue
 
 
 class KeySecurity(Cell):
-    pass
+    def __init__(self, buf, offset):
+        raise NotImplementedError
+        super().__init__(buf, offset)
 CELL_TYPES['sk'] = KeySecurity
 
 
 class BigData(Cell):
-    pass
+    def __init__(self, buf, offset):
+        super().__init__(buf, offset)
+        self._fields['number_of_segments'] = (6, WORD)
+        self._fields['segments_list_offset'] = (8, DWORD)
+        self._data = None
+    
+    @property
+    def data(self):
+        if self._data is None:
+            self._data = b''
+            current_size = 0
+            segments_list = Cell(self._buf, 4096 + self.segments_list_offset)
+            for i in range(self.number_of_segments):
+                data_segment_offset = segments_list.unpack(4+current_size, DWORD)
+                data_segment = Cell(self._buf, 4096 + data_segment_offset).unpack(4, BYTES, 16344)
+                self._data += data_segment
+        return self._data
 CELL_TYPES['db'] = BigData
 
 

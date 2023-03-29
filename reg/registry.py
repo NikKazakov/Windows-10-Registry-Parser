@@ -59,6 +59,84 @@ class Hbins(LazyList):
         super().__init__(buf, offset, Hbin, max_size=max_size)
 
 
+class RegistryValue:
+    def __init__(self, keyvalue):
+        if not isinstance(keyvalue, KeyValue):
+            raise ValueError(f'Expected KeyValue, got {type(keyvalue)}')
+        
+        self._keyvalue = keyvalue
+    
+    @property
+    def name(self):
+        return self._keyvalue.name
+    
+    @property
+    def value(self):
+        return self._keyvalue.data
+    
+    @property
+    def type(self):
+        return self._keyvalue.type_str
+    
+    def __str__(self):
+        return f'{self.type} {self.name}={self.value}'
+    
+    def __repr__(self):
+        return f'RegistryValue(name="{self.name}", value="{self.value}", type="{self.type}")'
+
+
+class RegistryKey:
+    def __init__(self, keynode, path):
+        if not isinstance(keynode, KeyNode):
+            raise ValueError(f'Expected KeyNode, got {type(keynode)}')
+        
+        self._keynode = keynode
+        self._path = path
+        self._subkeys = None
+        self._values = None
+
+    @property
+    def name(self):
+        return self._keynode.name
+        
+    @property
+    def subkeys(self):
+        if self._subkeys is None:
+            name = '' if self.name == 'ROOT' else self.name
+            self._subkeys = KeyedList({i.name: RegistryKey(i, self._path + name + '\\') for i in self._unpack_subkeys(self._keynode.subkeys)})
+        return self._subkeys
+    
+    def _unpack_subkeys(self, cell):
+        if isinstance(cell, PointersList) or isinstance(cell, list):
+            r = []
+            for i in cell:
+                r.extend(self._unpack_subkeys(i))
+            return r
+        elif isinstance(cell, KeyNode):
+            return [cell,]
+        else:
+            print(type(cell))
+            raise SystemError
+    
+    def __getitem__(self, key):
+        if not isinstance(key, str) and not isinstance(key, int):
+            raise TypeError(f'Expected str, got {type(key)}')
+        
+        return self.subkeys[key]
+
+    @property
+    def values(self):
+        if self._values is None:
+            self._values = KeyedList({i.name: RegistryValue(i) for i in self._keynode.values})
+        return self._values
+    
+    def __str__(self):
+        return f'{self._path}{self.name}, {len(self.values)} values, {len(self.subkeys)} subkeys'
+    
+    def __repr__(self):
+        return f'RegistryKey(name="{self.name}", path="{self._path}")'
+
+
 class Registry:
     def __init__(self, buf):
         self._buf = buf
@@ -69,6 +147,11 @@ class Registry:
     def from_file(cls, fd):
         return cls(fd.read())
     
+    @classmethod
+    def from_path(cls, path):
+        with open(path, 'rb') as f:
+            return cls.from_file(f)
+
     @property
     def regf(self):
         if self._regf is None:
@@ -84,11 +167,13 @@ class Registry:
     def __str__(self) -> str:
         return f'Registry {self.regf.file_name}'
 
-    def repr(self, depth=0):
-        for hbin in self.hbins:
-            for cell in hbin.cells:
-                print(cell)
-                if isinstance(cell, KeyNode):
-                    cell._repr(self.regf.file_name)
-                break
-            break
+    @property
+    def root(self):
+        return RegistryKey(self.hbins[0].cells[0], '')
+    
+    def get(self, path):
+        keynode = self.root
+        path = path.strip('\\').split('\\')
+        for name in path:
+            keynode = keynode[name]
+        return keynode
